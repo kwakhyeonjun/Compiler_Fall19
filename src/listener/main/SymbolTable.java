@@ -18,18 +18,18 @@ public class SymbolTable {
 	
 	static public class VarInfo {
 		Type type; 
-		int id;
+		String id;
 		int initVal;
 
 
         //변수에 저장될 값을 같이 입력하는 경우 ( ex: int a = 2;
-        public VarInfo(Type type,  int id, int initVal) {
+        public VarInfo(Type type,  String id, int initVal) {
 			this.type = type;
 			this.id = id;
 			this.initVal = initVal;
 		}
         //변수만 선언하는 경우
-		public VarInfo(Type type,  int id) {
+		public VarInfo(Type type,  String id) {
 			this.type = type;
 			this.id = id;
 			this.initVal = 0;
@@ -66,36 +66,36 @@ public class SymbolTable {
 	
 	void putLocalVar(String varname, Type type){
 		//<Fill here>
-		_register.put(varname, new VarInfo(type, _localRegisterID++));
+		_register.put(varname, new VarInfo(type, "x"+_localRegisterID++));
 	}
 	
 	void putGlobalVar(String varname, Type type){
 		//<Fill here>
-		_register.put(varname, new VarInfo(type, _globalRegisterID++));
+		_register.put(varname, new VarInfo(type, "x"+_globalRegisterID++));
 	}
 	
 	void putLocalVarWithInitVal(String varname, Type type, int initVar){
 		//<Fill here>
-		_register.put(varname, new VarInfo(type, _localRegisterID++, initVar));
+		_register.put(varname, new VarInfo(type, "x"+_localRegisterID++, initVar));
 	}
 	void putGlobalVarWithInitVal(String varname, Type type, int initVar){
 		//<Fill here>
-		_register.put(varname, new VarInfo(type, _globalRegisterID++, initVar));
+		_register.put(varname, new VarInfo(type, "x"+_globalRegisterID++, initVar));
 	}
 
-	void putTempVar(String varname, int register){
+	void putTempVar(String varname, String register){
 	    _register.put(varname, new VarInfo(Type.INT, register));
     }
 
     String getTempVar(String varname){
-	    return Integer.toString(_register.get(varname).id);
+	    return _register.get(varname).id;
     }
 
 	 String getNewTempVar() {
 	    if(_tempRegisterID >= 32){
 	        setTempVar();
         }
-		return Integer.toString(_tempRegisterID++);
+		return "x"+_tempRegisterID++;
 	}
 
 	void setTempVar(){
@@ -129,7 +129,7 @@ public class SymbolTable {
 			else
 				type = Type.ERROR;
 
-			_register.put(getParamName(params.param(i)), new VarInfo(type, _paramsID++));
+			_register.put(getParamName(params.param(i)), new VarInfo(type, "x"+_paramsID++));
 		}
 	}
 
@@ -139,17 +139,9 @@ public class SymbolTable {
 
 
 	String getParam(){
-	    return Integer.toString(_paramsID++);
+	    return "x"+_paramsID++;
     }
 
-	//TODO 이거 지워도 될거같은데?
-//	private void initFunTable() {
-//		FInfo FuncLabel = new FInfo();
-//		FuncLabel.label = _labelID++;
-//
-//		_fsymtable.put("main", FuncLabel); //TODO
-//	}
-	
 	public String getFunLabel(String fname) {
 		// <Fill here>
 		return Integer.toString(_fsymtable.get(fname).label);
@@ -180,32 +172,22 @@ public class SymbolTable {
 	
 	String getVarId(String name){
 		// <Fill here>
-		VarInfo lvar = (VarInfo) _register.get(name);
-		if(lvar != null){
-			return Integer.toString(lvar.id);
-		}
-
-		VarInfo gvar = _register.get(name);
-		if(gvar != null){
-			return Integer.toString(gvar.id);
+		VarInfo var = (VarInfo) _register.get(name);
+		if(var != null){
+			return var.id;
 		}
 
 		return "ERROR";
 	}
 	
 	Type getVarType(String name){
-		VarInfo lvar = (VarInfo) _register.get(name);
-		if (lvar != null) {
-			return lvar.type;
+		VarInfo var = (VarInfo) _register.get(name);
+		if (var != null) {
+			return var.type;
 		}
-		
-		VarInfo gvar = (VarInfo) _register.get(name);
-		if (gvar != null) {
-			return gvar.type;
-		}
-		
 		return Type.ERROR;	
 	}
+
 	String newLabel() {
 		return "label" + _labelID++;
 	}
