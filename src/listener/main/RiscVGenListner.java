@@ -13,7 +13,8 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
 
     @Override
     public void enterFun_decl(MiniCParser.Fun_declContext ctx) {
-        symbolTable.initFunDecl();
+        //symbolTable.initFunDecl();
+        //함수에 들어갈 때 parameter를 x10~x17에 저장해야함.
 
         String fname = getFunName(ctx);
         MiniCParser.ParamsContext params;
@@ -21,7 +22,6 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
         symbolTable.putFunSpecStr(ctx);
         params = (MiniCParser.ParamsContext) ctx.getChild(3);
         symbolTable.putParams(params);
-
     }
 
 
@@ -135,9 +135,9 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
 
         stmt += Lloop + ":" + "\n"
                 + condExpr + "\n"
-                + "bne " + Lend + "\n"
+                + "beq x" + symbolTable.getVarId(ctx.expr().getText()) +", x0, " + Lend + "\n" //TODO - beq x?, x?, Lend - 조건을 만족하지 않는 경우
                 + loopStmt + "\n"
-                + "beq x0, x0," + Lloop + "\n"
+                + "beq x0, x0, " + Lloop + "\n"
                 + Lend + ":" + "\n";
 
         newTexts.put(ctx, stmt);
@@ -148,14 +148,16 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
     public void exitFun_decl(MiniCParser.Fun_declContext ctx) {
         // <(2) Fill here!>
         String stmt = "";
+        int sp = symbolTable.getParamsSize(ctx.params())*8;
 
         String funcHeader = funcHeader(ctx, getFunName(ctx));
         stmt += funcHeader
                 + newTexts.get(ctx.compound_stmt());
 
-        stmt += "addi sp, sp, " + symbolTable.getParamsSize(ctx.params()) +"\n"
-                + "jalr x0, 0(x1)";
-
+        if(sp != 0) {
+            stmt += "addi sp, sp, " + sp + "\n";
+        }
+        stmt += "jalr x0, 0(x1)\n\n";
         newTexts.put(ctx, stmt);
     }
 
@@ -164,8 +166,8 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
         String label = symbolTable.getFunLabel(fname);
         String stmt = "";
         int sp = symbolTable.getParamsSize(ctx.params())*8; // x1 저장해야함
-        stmt = "label" + label + "\n"
-                + "addi sp, sp, " + sp + "\n"
+        stmt = "label" + label + ":\n"
+                + "addi sp, sp, -" + sp + "\n"
                 + "sd x1, "+sp + "(sp)\n";
         sp-=8;
         for(int i = 0; i < ctx.params().param().size(); i++){
@@ -176,7 +178,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
     }
 
 
-
+    //TODO
     @Override
     public void exitVar_decl(MiniCParser.Var_declContext ctx) {
         String varName = ctx.IDENT().getText();
@@ -256,8 +258,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
         // <(4) Fill here>
 
         //load -> return
-        String stmt = "iload_" + symbolTable.getVarId(ctx.expr().getText())+"\n"
-                + "ireturn\n";
+        String stmt = "add x10, x" +  symbolTable.getVarId(ctx.expr().getText()) + ", x0\n";
         newTexts.put(ctx, stmt);
     }
 
@@ -275,13 +276,12 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
             if(ctx.IDENT() != null) {
                 String idName = ctx.IDENT().getText();
                 if(symbolTable.getVarType(idName) == SymbolTable.Type.INT) {
-                    expr += "iload_" + symbolTable.getVarId(idName) + " \n";
+                    expr += symbolTable.getVarId(idName);
                 }
                 //else	// Type int array => Later! skip now..
                 //	expr += "           lda " + symbolTable.get(ctx.IDENT().getText()).value + " \n";
-            } else if (ctx.LITERAL() != null) {
-                String literalStr = ctx.LITERAL().getText();
-                expr += "ldc " + literalStr + " \n";
+            } else if (ctx.LITERAL() != null) { //TODO
+                expr += ctx.LITERAL().getText();
             }
         } else if(ctx.getChildCount() == 2) { // UnaryOperation
             expr = handleUnaryExpr(ctx, newTexts.get(ctx) + expr);
@@ -291,8 +291,8 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
                 expr = newTexts.get(ctx.expr(0));
 
             } else if(ctx.getChild(1).getText().equals("=")) { 	// IDENT '=' expr
-                expr = newTexts.get(ctx.expr(0))
-                        + "istore_" + symbolTable.getVarId(ctx.IDENT().getText()) + " \n";
+                expr = newTexts.get(ctx.expr(0)) // TODO : 어떻게 값을 저장할 것인가? - 레지스터 번호를 저장해야하는데?
+                        + "add x" + symbolTable.getVarId(ctx.IDENT().getText()) + ", x" + symbolTable.getVarId(ctx.expr(0).getText()) + ", x0" + "\n";
 
             } else { 											// binary operation
                 expr = handleBinExpr(ctx, expr);
@@ -332,7 +332,8 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
             case "-":
                 expr += "           ineg \n"; break;
             case "--":
-                expr += "ldc 1" + "\n"
+                expr += "addi " +
+                        "ldc 1" + "\n"
                         + "isub" + "\n";
                 break;
             case "++":
@@ -350,110 +351,131 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
         return expr;
     }
 
-
+    //TODO : 값을 저장할 register?
     private String handleBinExpr(MiniCParser.ExprContext ctx, String expr) {
         String l2 = symbolTable.newLabel();
         String lend = symbolTable.newLabel();
 
-        expr += newTexts.get(ctx.expr(0));
-        expr += newTexts.get(ctx.expr(1));
+        String op1 = newTexts.get(ctx.expr(0));
+        String op2 = newTexts.get(ctx.expr(1));
+        //TODO : temp 로 사용할 register 사용하기 - label처럼 사용하면될듯 - but 초기화하는 함수 필요 - 해당하는 local내에서는 사용할 수 있어야 하는데 그럼 map에 저장해야하지않아?
+        // x10이 tempReg로 바뀌고 계싼이 끝나고 tempReg에 저장됨을 symbolTable에 저장되어야함
+        // 결과적으로 tempReg는 하나만 있으면 됨 - 최종적으로 나오는 결과를 temp에 저장하고, 이를 symboltable에 저장하기
+        String temp1 = symbolTable.getNewTempVar();
+        String temp2 = symbolTable.getNewTempVar();
 
         switch (ctx.getChild(1).getText()) {
             case "*":
-                expr += "imul \n"; break;
+                expr += "mul x" + temp1 + ", x" + op1 + ", x" + op2 + "\n";
+                break;
             case "/":
-                expr += "idiv \n"; break;
+                expr += "div x"+ temp1 +", x" + op1 + ", x" + op2 + "\n"; break;
             case "%":
-                expr += "irem \n"; break;
+                expr += "rem x" + temp1 +", x" + op1 + ", x" + op2 + "\n"; break;
             case "+":		// expr(0) expr(1) iadd
-                expr += "iadd \n"; break;
+                expr += "add x" + temp1 + ", x" + op1 + ", x" + op2 + "\n"; break;
             case "-":
-                expr += "isub \n"; break;
+                expr += "sub x" + temp1 +", x" + op1 + ", x" + op2 + "\n"; break;
 
-            case "==":
-                expr += "isub " + "\n"
-                        + "ifeq l2"+ "\n"
-                        + "ldc 0" + "\n"
-                        + "goto " + lend + "\n"
-                        + l2 + ": " + "ldc 1" + "\n"
-                        + lend + ": " + "\n";
+            case "==": //같으면 1, 같지 않으면 0
+                expr += "sub x"+ temp2 +", x"+ op1 + ", x"+ op2 + "\n"
+                        + "bne x" + temp2 + ", x0, "+l2 +"\n"
+                        + "addi x" + temp1 +", x0, 1\n"
+                        + "bne x0, x0, "+ lend +"\n"
+                        + l2 + ": \n"
+                        + "addi x" + temp1 + ", x0, x0\n"
+                        + lend + ": \n";
                 break;
-            case "!=":
-                expr += "isub " + "\n"
-                        + "ifne l2"+ "\n"
-                        + "ldc 0" + "\n"
-                        + "goto " + lend + "\n"
-                        + l2 + ": " + "ldc 1" + "\n"
-                        + lend + ": " + "\n";
+            case "!=": //같지않으면 1, 같으면 0
+                expr += "sub x" + temp2 + ", x" + op1 + ", x" + op2 + "\n"
+                        + "beq x" + temp2 + ", x0, "+l2 +"\n"
+                        + "addi x"+ temp1 +", x0, 1\n"
+                        + "bne x0, x0, "+ lend +"\n"
+                        + l2 + ": \n"
+                        + "addi x" + temp1 + ", x0, x0\n"
+                        + lend + ": \n";
                 break;
-            case "<=":
+            case "<=": //작거나 같으면 1, 크면 0
                 // <(5) Fill here>
-                expr += "isub " + "\n"
-                        + "ifle 12" + "\n"
-                        + "ldc 0" + "\n"
-                        + "goto " + lend + "\n"
-                        + l2 + ": " + "ldc 1" + "\n"
-                        + lend + ": " + "\n";
+                expr += "sub x" + temp2 + ", x" + op1 + ", x" + op2 + "\n"
+                        + "bgt x" + temp2 + ", x0, "+l2 +"\n"
+                        + "addi x" + temp1 + ", x0, 1\n"
+                        + "bne x0, x0, "+ lend +"\n"
+                        + l2 + ": \n"
+                        + "addi x" + temp1 + ", x0, x0\n"
+                        + lend + ": \n";
                 break;
-            case "<":
+            case "<": // 작으면 1, 크거나 같으면 0
                 // <(6) Fill here>
-                expr += "isub " + "\n"
-                        + "iflt 12" + "\n"
-                        + "ldc 0"+"\n"
-                        + "goto " + lend + "\n"
-                        + l2 + ": " + "ldc 1" + "\n"
-                        + lend + ": "+ "\n"
-                        + lend + ": " + "\n";
+                expr += "sub x" + temp2 + ", x" + op1 + ", x" + op2 + "\n"
+                        + "bge x" + temp2 + ", x0, "+l2 +"\n"
+                        + "addi x" + temp1 + ", x0, 1\n"
+                        + "bne x0, x0, "+ lend +"\n"
+                        + l2 + ": \n"
+                        + "addi x" + temp1 +", x0, x0\n"
+                        + lend + ": \n";
                 break;
 
-            case ">=":
+            case ">=": //크거나 같으면 1, 작으면 0
                 // <(7) Fill here>
-                expr += "isub " + "\n"
-                        + "ifge 12" + "\n"
-                        + "ldc 0"+"\n"
-                        + "goto " + lend + "\n"
-                        + l2 + ": " + "ldc 1" + "\n"
-                        + lend + ": "+ "\n"
-                        + lend + ": " + "\n";
+                expr += "sub x" + temp2 + ", x" + op1 + ", x" + op2 + "\n"
+                        + "blt x" + temp2 + ", x0, "+l2 +"\n"
+                        + "addi x"+ temp1 +", x0, 1\n"
+                        + "bne x0, x0, "+ lend +"\n"
+                        + l2 + ": \n"
+                        + "addi x" + temp1 +", x0, x0\n"
+                        + lend + ": \n";
                 break;
 
-            case ">":
+            case ">": //크면 1, 작거나 같으면 0
                 // <(8) Fill here>
-                expr += "isub " + "\n"
-                        + "ifgt 12" + "\n"
-                        + "ldc 0"+"\n"
-                        + "goto " + lend + "\n"
-                        + l2 + ": " + "ldc 1" + "\n"
-                        + lend + ": "+ "\n"
-                        + lend + ": " + "\n";
+                expr += "sub x" + temp2 + ", x" + op1 + ", x" + op2 + "\n"
+                        + "ble x" + temp2 + ", x0, "+l2 +"\n"
+                        + "addi x" + temp1 +", x0, 1\n"
+                        + "bne x0, x0, "+ lend +"\n"
+                        + l2 + ": \n"
+                        + "addi x" + temp1 + ", x0, x0\n"
+                        + lend + ": \n";
                 break;
 
             case "and":
-                expr += "iand \n";
+                expr += "and x" + temp1 + ", x" + op1 + ", x" + op2 + "\n";
             case "or":
                 // <(9) Fill here>
-                expr += "ior "+ "\n";
+                expr += "or x" + temp1 +", x" + op1 + ", x" + op2 + "\n";
                 break;
-
         }
+        symbolTable.putTempVar(ctx.getText(), Integer.parseInt(temp1)); // 결과가 무조건 x28에 저장됨
         return expr;
     }
+
+    //function 호출
     private String handleFunCall(MiniCParser.ExprContext ctx, String expr) {
+        symbolTable.setParamID();
         String fname = getFunName(ctx);
-        expr = "jal x1,  label" + symbolTable.getFunLabel(fname) + "\n";
+        for(int i = 0; ctx.args().expr(i) != null; i++){
+            if(ctx.args().expr(i).LITERAL() != null){
+                String temp = symbolTable.getNewTempVar();
+                expr += "addi x" + temp + ", x0, " + ctx.args().expr(i).LITERAL() +"\n"
+                        + "add x" + symbolTable.getParam() + ", x" + temp + ", x0\n";
+            }
+            else{
+                expr += "add x" + symbolTable.getParam() + ", x" + symbolTable.getVarId(ctx.args().expr(i).getText()) + ", x0\n";
+            }
+        }
+        expr += "jal x1, label" + symbolTable.getFunLabel(fname) + "\n";
 
         return expr;
-
     }
 
     // args	: expr (',' expr)* | ;
     @Override
     public void exitArgs(MiniCParser.ArgsContext ctx) {
 
-        String argsStr = "\n";
+        String argsStr = "";
 
         for (int i=0; i < ctx.expr().size() ; i++) {
-            argsStr += newTexts.get(ctx.expr(i)) ;
+            argsStr += newTexts.get(ctx.expr(i)) + "\n" ;
         }
         newTexts.put(ctx, argsStr);
     }

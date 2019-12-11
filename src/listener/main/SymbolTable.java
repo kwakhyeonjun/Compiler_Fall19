@@ -21,13 +21,14 @@ public class SymbolTable {
 		int id;
 		int initVal;
 
-		//변수만 선언하는 경우
-		public VarInfo(Type type,  int id, int initVal) {
+
+        //변수에 저장될 값을 같이 입력하는 경우 ( ex: int a = 2;
+        public VarInfo(Type type,  int id, int initVal) {
 			this.type = type;
 			this.id = id;
 			this.initVal = initVal;
 		}
-		//변수에 저장될 값을 같이 입력하는 경우 ( ex: int a = 2;
+        //변수만 선언하는 경우
 		public VarInfo(Type type,  int id) {
 			this.type = type;
 			this.id = id;
@@ -52,16 +53,16 @@ public class SymbolTable {
 	private int _paramsID = 10; //parameter를 저장하는 register : x10~x17
 	private int _labelID = 0; //label num 저장
 	
-	SymbolTable(){
-		initFunDecl();
-		initFunTable();
-	}
-	
-	void initFunDecl(){		// at each func decl
-		_localRegisterID = 18;
-		_tempRegisterID = 28;
-		_paramsID = 10;
-	}
+//	SymbolTable(){
+//		initFunDecl();
+//		initFunTable();
+//	}
+//
+//	void initFunDecl(){		// at each func decl
+//		_localRegisterID = 18;
+//		_tempRegisterID = 28;
+//		_paramsID = 10;
+//	}
 	
 	void putLocalVar(String varname, Type type){
 		//<Fill here>
@@ -80,7 +81,25 @@ public class SymbolTable {
 	void putGlobalVarWithInitVal(String varname, Type type, int initVar){
 		//<Fill here>
 		_register.put(varname, new VarInfo(type, _globalRegisterID++, initVar));
-	
+	}
+
+	void putTempVar(String varname, int register){
+	    _register.put(varname, new VarInfo(Type.INT, register));
+    }
+
+    String getTempVar(String varname){
+	    return Integer.toString(_register.get(varname).id);
+    }
+
+	 String getNewTempVar() {
+	    if(_tempRegisterID >= 32){
+	        setTempVar();
+        }
+		return Integer.toString(_tempRegisterID++);
+	}
+
+	void setTempVar(){
+		_tempRegisterID = 28;
 	}
 
 	int getParamsSize(MiniCParser.ParamsContext params){
@@ -114,13 +133,22 @@ public class SymbolTable {
 		}
 	}
 
-	//TODO 이거 지워도 될거같은데?
-	private void initFunTable() {
-		FInfo FuncLabel = new FInfo();
-		FuncLabel.label = _labelID++;
+	void setParamID(){
+	    _paramsID = 10;
+    }
 
-		_fsymtable.put("main", FuncLabel); //TODO
-	}
+
+	String getParam(){
+	    return Integer.toString(_paramsID++);
+    }
+
+	//TODO 이거 지워도 될거같은데?
+//	private void initFunTable() {
+//		FInfo FuncLabel = new FInfo();
+//		FuncLabel.label = _labelID++;
+//
+//		_fsymtable.put("main", FuncLabel); //TODO
+//	}
 	
 	public String getFunLabel(String fname) {
 		// <Fill here>
