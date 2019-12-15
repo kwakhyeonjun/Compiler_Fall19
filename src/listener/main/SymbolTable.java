@@ -21,7 +21,6 @@ public class SymbolTable {
 		String id;
 		int initVal;
 
-
         //변수에 저장될 값을 같이 입력하는 경우 ( ex: int a = 2;
         public VarInfo(Type type,  String id, int initVal) {
 			this.type = type;
@@ -37,12 +36,32 @@ public class SymbolTable {
 	}
 	
 	static public class FInfo {
-		public int label;
-		public int paramsSize;
+		int label;
+		int paramsSize;
+	}
+
+	static public class MemInfo{
+		int addr; // 시작위치
+		int size; // 메모리 사이즈
+		int initVal;
+
+		public MemInfo(int addr, int size){
+			this.addr = addr;
+			this.size = size;
+			this.initVal = 0;
+		}
+
+		public MemInfo(int addr, int size, int initVal){
+			this.addr = addr;
+			this.size = size;
+			this.initVal = initVal;
+		}
 	}
 	
 	private Map<String, VarInfo> _register = new HashMap<>();	// register (x0~x31)
-	private Map<String, FInfo> _fsymtable = new HashMap<>();
+	private Map<String, FInfo> _fsymtable = new HashMap<>();	// function
+	private Map<String, MemInfo> _virtualmemory = new HashMap<>();	// virtual memory
+	private Map<String, MemInfo> _memory = new HashMap<>(); 	// date memory
 
 	//x0 register는 0을 저장, x1 ~ x4는 용례가 특수한 register
 	private final int _registerX0 = 0;
@@ -52,17 +71,43 @@ public class SymbolTable {
 	private int _tempRegisterID = 28; //함수 내에서 임시로 사용할 수 있는 x28~x31 레지스터
 	private int _paramsID = 10; //parameter를 저장하는 register : x10~x17
 	private int _labelID = 0; //label num 저장
-	
-//	SymbolTable(){
-//		initFunDecl();
-//		initFunTable();
-//	}
-//
-//	void initFunDecl(){		// at each func decl
-//		_localRegisterID = 18;
-//		_tempRegisterID = 28;
-//		_paramsID = 10;
-//	}
+	private int _virtualMemoryAddr = 0x50000000;
+	private int _memoryAddr = 0x40000000;
+
+	void putMem(String name, int size){ // size = 8의 배수로
+		_memory.put(name, new MemInfo(_memoryAddr, size));
+		_memoryAddr += size;
+	}
+
+	int getMemAddr(String name){
+		return _memory.get(name).addr;
+	}
+
+	int getMemSize(String name){
+		return _memory.get(name).size;
+	}
+
+	void putVirtualMem(String name, int size){
+		_virtualmemory.put(name, new MemInfo(_virtualMemoryAddr, size));
+		_virtualMemoryAddr += size;
+	}
+
+	void putVirtualMemWithInit(String name, int size, int init){
+		_virtualmemory.put(name, new MemInfo(_virtualMemoryAddr, size, init));
+		_virtualMemoryAddr += size;
+	}
+
+	int getVirtualMemAddr(String name){
+		return _virtualmemory.get(name).addr;
+	}
+
+	int getVirtualMemSize(String name){
+		return _virtualmemory.get(name).size;
+	}
+
+	int get_globalRegisterID(){
+		return _globalRegisterID;
+	}
 	
 	void putLocalVar(String varname, Type type){
 		//<Fill here>
@@ -71,7 +116,11 @@ public class SymbolTable {
 	
 	void putGlobalVar(String varname, Type type){
 		//<Fill here>
-		_register.put(varname, new VarInfo(type, "x"+_globalRegisterID++));
+		if(_globalRegisterID >= 10){
+			putVirtualMem(varname, 0x4);
+		}else {
+			_register.put(varname, new VarInfo(type, "x" + _globalRegisterID++));
+		}
 	}
 	
 	void putLocalVarWithInitVal(String varname, Type type, int initVar){
@@ -80,7 +129,11 @@ public class SymbolTable {
 	}
 	void putGlobalVarWithInitVal(String varname, Type type, int initVar){
 		//<Fill here>
-		_register.put(varname, new VarInfo(type, "x"+_globalRegisterID++, initVar));
+		if(_globalRegisterID >= 10){
+			putVirtualMemWithInit(varname, 0x4, initVar);
+		}else {
+			_register.put(varname, new VarInfo(type, "x" + _globalRegisterID++, initVar));
+		}
 	}
 
 	void putTempVar(String varname, String register){

@@ -30,8 +30,10 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
     public void enterVar_decl(MiniCParser.Var_declContext ctx) {
         String varName = ctx.IDENT().getText();
 
+
         if (isArrayDecl(ctx)) {
-            symbolTable.putGlobalVar(varName, SymbolTable.Type.INTARRAY);
+            int size = Integer.parseInt(ctx.LITERAL().getText());
+            symbolTable.putMem(varName, size*0x4);
         }
         else if (isDeclWithInit(ctx)) {
             symbolTable.putGlobalVarWithInitVal(varName, SymbolTable.Type.INT, initVal(ctx));
@@ -45,7 +47,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
     @Override
     public void enterLocal_decl(MiniCParser.Local_declContext ctx) {
         if (isArrayDecl(ctx)) {
-            symbolTable.putLocalVar(getLocalVarName(ctx), SymbolTable.Type.INTARRAY);
+            symbolTable.putMem(getLocalVarName(ctx), Integer.parseInt(ctx.LITERAL().getText())*0x4);
         }
         else if (isDeclWithInit(ctx)) {
             symbolTable.putLocalVarWithInitVal(getLocalVarName(ctx), SymbolTable.Type.INT, initVal(ctx));
@@ -135,7 +137,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
 
         stmt += Lloop + ":" + "\n"
                 + condExpr + "\n"
-                + "beq " + symbolTable.getVarId(ctx.expr().getText()) +", x0, " + Lend + "\n" //TODO - beq x?, x?, Lend - 조건을 만족하지 않는 경우
+                + "beq " + symbolTable.getVarId(ctx.expr().getText()) +", x0, " + Lend + "\n"
                 + loopStmt + "\n"
                 + "beq x0, x0, " + Lloop + "\n"
                 + Lend + ":" + "\n";
@@ -179,29 +181,37 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
     }
 
 
-    //TODO
+    // 전역변수
+    // virtual memory 구현? - spilling
+    // if global reg > 9 인 경우에 0x50000000에 data를 저장 - symboltable에 저장된 위치를 저장
     @Override
     public void exitVar_decl(MiniCParser.Var_declContext ctx) {
         String varName = ctx.IDENT().getText();
         String varDecl = "";
+        String temp = symbolTable.getNewTempVar();
 
         if (isDeclWithInit(ctx)) {
-            varDecl += "putfield " + varName + "\n";
+            if(symbolTable.getVarId(ctx.IDENT().getText()) == "ERROR"){
+                varDecl += "addi " + temp + ", x0, " + ctx.LITERAL().getText() + "\n"
+                        + "sd " + temp + ", 0(0x" + Integer.toHexString(symbolTable.getVirtualMemAddr(varName)) + ")\n";
+            }else{
+                varDecl += "addi " + symbolTable.getVarId(varName) + ", x0, " + ctx.LITERAL().getText() + "\n";
+            }
+
+            //varDecl += "putfield " + varName + "\n";
             // v. initialization => Later! skip now..:
         }
         newTexts.put(ctx, varDecl);
     }
 
 
-    // TODO
     @Override
     public void exitLocal_decl(MiniCParser.Local_declContext ctx) {
         String varDecl = "";
 
         if (isDeclWithInit(ctx)) {
             String vId = symbolTable.getVarId(ctx);
-            varDecl += "ldc " + ctx.LITERAL().getText() + "\n"
-                    + "istore_" + vId + "\n";
+            varDecl += "addi "+ vId + ", x0, " + ctx.LITERAL().getText();
         }
 
         newTexts.put(ctx, varDecl);
@@ -261,7 +271,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
         // <(4) Fill here>
 
         //load -> return
-        String stmt = "add x10, " +  symbolTable.getVarId(ctx.expr().getText()) + ", x0\n"; //TODO 에러없으면 지우기
+        String stmt = "add x10, " +  symbolTable.getVarId(ctx.expr().getText()) + ", x0\n";
         newTexts.put(ctx, stmt);
     }
 
@@ -283,7 +293,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
                 }
                 //else	// Type int array => Later! skip now..
                 //	expr += "           lda " + symbolTable.get(ctx.IDENT().getText()).value + " \n";
-            } else if (ctx.LITERAL() != null) { //TODO literal 처리 어떻게 할거야?
+            } else if (ctx.LITERAL() != null) {
                 expr += ctx.LITERAL().getText();
 //                String temp = symbolTable.getNewTempVar();
 //                expr += "addi x" + temp + ", x0, " +ctx.LITERAL().getText() + "\n";
@@ -297,8 +307,13 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
                 expr = newTexts.get(ctx.expr(0));
 
             } else if(ctx.getChild(1).getText().equals("=")) { 	// IDENT '=' expr
-                expr = newTexts.get(ctx.expr(0)) // 어떻게 값을 저장할 것인가? - 레지스터 번호를 저장해야하는데? 해결
-                        + "add " + symbolTable.getVarId(ctx.IDENT().getText()) + ", " + symbolTable.getVarId(ctx.expr(0).getText()) + ", x0" + "\n";
+                if(ctx.expr(0).LITERAL() != null){
+                    expr = "addi " + symbolTable.getVarId(ctx.IDENT().getText()) + ", x0, " + ctx.expr(0).LITERAL().getText();
+                }else{
+                    expr = newTexts.get(ctx.expr(0))
+                            + "add " + symbolTable.getVarId(ctx.IDENT().getText()) + ", " + symbolTable.getVarId(ctx.expr(0).getText()) + ", x0" + "\n";
+                }
+
 
             } else { 											// binary operation
                 expr = handleBinExpr(ctx, expr);
@@ -310,19 +325,21 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
             if(ctx.args() != null){		// function calls
                 expr = handleFunCall(ctx, expr);
             } else { // expr
-                // Arrays: TODO!!!
+                // Arrays:
                 String varName = ctx.IDENT().getText();
-                expr += "iload_" + symbolTable.getVarId(ctx.expr().get(0).getText())+ "\n"
-                        +"iaload_" + symbolTable.getVarId(ctx.expr(0).getText());
+                String temp = symbolTable.getNewTempVar();
+                expr += "ld " + temp + ", 0x" + Integer.parseInt(ctx.expr(0).LITERAL().getText()) + "(0x" + Integer.toHexString(symbolTable.getMemAddr(varName)) + ")\n";
             }
         }
         // IDENT '[' expr ']' '=' expr
-        else { // Arrays: TODO!!!
+        else { // Arrays:
             String varName = ctx.IDENT().getText();
-            expr += "iload_" + symbolTable.getVarId(ctx.expr().get(0).getText())+ "\n"
-                    + "iaload" + symbolTable.getVarId(ctx.expr(0).getText()) + "\n"
-                    + "iload_" + symbolTable.getVarId(ctx.expr(1).getText()) + "\n"
-                    + "iastore\n";
+            String temp = symbolTable.getNewTempVar();
+            String imm = " ";
+            String ex = newTexts.get(ctx.expr(1));
+            if(ex.charAt(0) != 'x') imm = "i ";
+            expr += "add" + imm + temp + ", x0, " + ex + "\n"
+                    +"sd " + temp + ", " + Integer.parseInt(ctx.expr(0).LITERAL().getText()) + "(" + Integer.toHexString(symbolTable.getMemAddr(varName)) + ")\n";
         }
         newTexts.put(ctx, expr);
     }
@@ -330,7 +347,6 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
 
     private String handleUnaryExpr(MiniCParser.ExprContext ctx, String expr) {
         String l1 = symbolTable.newLabel();
-        String l2 = symbolTable.newLabel();
         String lend = symbolTable.newLabel();
 
         int intOP = Integer.parseInt(newTexts.get(ctx.expr(0)));
@@ -358,35 +374,35 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
         return expr;
     }
 
-    //TODO : 값을 저장할 register?
+
     private String handleBinExpr(MiniCParser.ExprContext ctx, String expr) {
         String l2 = symbolTable.newLabel();
         String lend = symbolTable.newLabel();
-
+        String imm = " ";
         String op1 = newTexts.get(ctx.expr(0));
         String op2 = newTexts.get(ctx.expr(1));
-        //TODO : temp 로 사용할 register 사용하기 - label처럼 사용하면될듯 - but 초기화하는 함수 필요 - 해당하는 local내에서는 사용할 수 있어야 하는데 그럼 map에 저장해야하지않아?
-        // x10이 tempReg로 바뀌고 계싼이 끝나고 tempReg에 저장됨을 symbolTable에 저장되어야함
-        // 결과적으로 tempReg는 하나만 있으면 됨 - 최종적으로 나오는 결과를 temp에 저장하고, 이를 symboltable에 저장하기
+
         String temp1 = symbolTable.getNewTempVar();
         String temp2 = symbolTable.getNewTempVar();
+
+        if(op2.charAt(0) != 'x') imm = "i ";
 
 
         switch (ctx.getChild(1).getText()) {
             case "*":
-                expr += "mul " + temp1 + ", " + op1 + ", " + op2 + "\n";
+                expr += "mul" + imm + temp1 + ", " + op1 + ", " + op2 + "\n";
                 break;
             case "/":
-                expr += "div "+ temp1 +", " + op1 + ", " + op2 + "\n"; break;
+                expr += "div" + imm + temp1 +", " + op1 + ", " + op2 + "\n"; break;
             case "%":
-                expr += "rem " + temp1 +", " + op1 + ", " + op2 + "\n"; break;
+                expr += "rem" + imm + temp1 +", " + op1 + ", " + op2 + "\n"; break;
             case "+":
-                expr += "add " + temp1 + ", " + op1 + ", " + op2 + "\n"; break;
+                expr += "add" + imm + temp1 + ", " + op1 + ", " + op2 + "\n"; break;
             case "-":
-                expr += "sub " + temp1 +", " + op1 + ", " + op2 + "\n"; break;
+                expr += "sub" + imm + temp1 +", " + op1 + ", " + op2 + "\n"; break;
 
             case "==": //같으면 1, 같지 않으면 0
-                expr += "sub "+ temp2 +", "+ op1 + ", "+ op2 + "\n"
+                expr += "sub" + imm + temp2 +", "+ op1 + ", "+ op2 + "\n"
                         + "bne " + temp2 + ", x0, "+l2 +"\n"
                         + "addi " + temp1 +", x0, 1\n"
                         + "bne x0, x0, "+ lend +"\n"
@@ -395,7 +411,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
                         + lend + ": \n";
                 break;
             case "!=": //같지않으면 1, 같으면 0
-                expr += "sub " + temp2 + ", " + op1 + ", " + op2 + "\n"
+                expr += "sub" + imm + temp2 + ", " + op1 + ", " + op2 + "\n"
                         + "beq " + temp2 + ", x0, "+l2 +"\n"
                         + "addi "+ temp1 +", x0, 1\n"
                         + "bne x0, x0, "+ lend +"\n"
@@ -405,7 +421,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
                 break;
             case "<=": //작거나 같으면 1, 크면 0
                 // <(5) Fill here>
-                expr += "sub " + temp2 + ", " + op1 + ", " + op2 + "\n"
+                expr += "sub" + imm + temp2 + ", " + op1 + ", " + op2 + "\n"
                         + "bgt " + temp2 + ", x0, "+l2 +"\n"
                         + "addi " + temp1 + ", x0, 1\n"
                         + "bne x0, x0, "+ lend +"\n"
@@ -415,7 +431,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
                 break;
             case "<": // 작으면 1, 크거나 같으면 0
                 // <(6) Fill here>
-                expr += "sub " + temp2 + ", " + op1 + ", " + op2 + "\n"
+                expr += "sub" + imm + temp2 + ", " + op1 + ", " + op2 + "\n"
                         + "bge " + temp2 + ", x0, "+l2 +"\n"
                         + "addi " + temp1 + ", x0, 1\n"
                         + "bne x0, x0, "+ lend +"\n"
@@ -426,7 +442,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
 
             case ">=": //크거나 같으면 1, 작으면 0
                 // <(7) Fill here>
-                expr += "sub " + temp2 + ", " + op1 + ", " + op2 + "\n"
+                expr += "sub" + imm + temp2 + ", " + op1 + ", " + op2 + "\n"
                         + "blt " + temp2 + ", x0, "+l2 +"\n"
                         + "addi "+ temp1 +", x0, 1\n"
                         + "bne x0, x0, "+ lend +"\n"
@@ -437,7 +453,7 @@ public class RiscVGenListner extends MiniCBaseListener implements ParseTreeListe
 
             case ">": //크면 1, 작거나 같으면 0
                 // <(8) Fill here>
-                expr += "sub " + temp2 + ", " + op1 + ", " + op2 + "\n"
+                expr += "sub" + imm + temp2 + ", " + op1 + ", " + op2 + "\n"
                         + "ble " + temp2 + ", x0, "+l2 +"\n"
                         + "addi " + temp1 +", x0, 1\n"
                         + "bne x0, x0, "+ lend +"\n"
